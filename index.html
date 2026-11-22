@@ -62,6 +62,7 @@ button.dng{background:#7a2a22;border-color:#a3402f}
   <button data-add="paper">+ Papel</button>
   <span class="sep"></span>
   <button id="fit" title="Centralizar tudo">Ver tudo</button>
+  <button id="full">Tela cheia</button>
   <button id="exp" title="Baixar backup">Salvar</button>
   <button id="imp" title="Carregar backup">Abrir</button>
 </div>
@@ -78,12 +79,14 @@ const STRING_COLORS = ["#c8202a", "#1e1e1e", "#e6c229", "#2a5bd7"];
 const uid = () => Math.random().toString(36).slice(2, 9);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let S = { items: [], links: [], view: { x: 0, y: 0, s: 1 }, z: 1 };
-let sel = null, els = {}, saveT = null;
+let sel = null, els = {}, saveT = null, lastTap = { id: null, t: 0 };
+const MODAL = new URLSearchParams(location.search).has("modal");
 
 /* ---------- persistência (IndexedDB) ---------- */
 const idb = () => new Promise((ok, no) => { const r = indexedDB.open("quadro-investigacao", 1); r.onupgradeneeded = () => r.result.createObjectStore("k"); r.onsuccess = () => ok(r.result); r.onerror = no; });
 async function dbGet() { try { const d = await idb(); return await new Promise(ok => { const q = d.transaction("k").objectStore("k").get("board"); q.onsuccess = () => ok(q.result); q.onerror = () => ok(null); }); } catch (e) { return null; } }
 async function dbSet(v) { try { const d = await idb(); d.transaction("k", "readwrite").objectStore("k").put(v, "board"); } catch (e) {} }
+const dbSetNow = () => { clearTimeout(saveT); return dbSet(JSON.parse(JSON.stringify(S))); };
 const save = () => { clearTimeout(saveT); saveT = setTimeout(() => dbSet(JSON.parse(JSON.stringify(S))), 400); };
 
 /* ---------- helpers ---------- */
@@ -185,6 +188,11 @@ world.addEventListener("pointerdown", e => {
   e.stopPropagation();
   it.z = ++S.z; select({ k: "i", id: it.id });
   if (e.target.dataset.pin !== undefined) return startLink(e, it);
+  const now = Date.now();
+  if (lastTap.id === it.id && now - lastTap.t < 350 && e.target.dataset.rs === undefined) {
+    lastTap = { id: null, t: 0 }; setTimeout(() => edit(it.id), 30); return;
+  }
+  lastTap = { id: it.id, t: now };
   const sx = e.clientX, sy = e.clientY;
   if (e.target.dataset.rs !== undefined) {
     const ow = it.w; return drag(e, ev => { it.w = Math.max(90, ow + (ev.clientX - sx) / S.view.s); paint(it); links(); });
@@ -227,7 +235,7 @@ function ctx() {
   }
   const it = item(sel.id); if (!it) return;
   ctxBar.innerHTML = (it.type === "note" ? NOTE_COLORS.map(c => `<button class="sw" style="background:${c}" data-nc="${c}" aria-label="Cor do post-it"></button>`).join("") + `<span class="sep"></span>` : "") +
-    `<button data-act="rl" title="Girar">↺</button><button data-act="rr" title="Girar">↻</button><button data-act="dup">Duplicar</button><button class="dng" data-act="deli">Excluir</button>`;
+    `<button data-act="edit">${it.type === "photo" ? "Legenda" : "Editar texto"}</button><button data-act="rl" title="Girar">↺</button><button data-act="rr" title="Girar">↻</button><button data-act="dup">Duplicar</button><button class="dng" data-act="deli">Excluir</button>`;
 }
 ctxBar.addEventListener("pointerdown", e => e.stopPropagation());
 ctxBar.addEventListener("input", e => {
@@ -244,6 +252,7 @@ ctxBar.addEventListener("click", e => {
   }
   const it = item(sel.id);
   if (d.nc) { it.color = d.nc; paint(it); save(); }
+  else if (d.act === "edit") edit(it.id);
   else if (d.act === "rl" || d.act === "rr") { it.rot += d.act === "rl" ? -4 : 4; paint(it); links(); save(); }
   else if (d.act === "dup") { const c = { ...it, id: uid(), x: it.x + 28, y: it.y + 28, z: ++S.z }; S.items.push(c); paint(c); select({ k: "i", id: c.id }); save(); }
   else if (d.act === "deli") removeItem(it.id);
@@ -281,6 +290,25 @@ $("#fit").onclick = () => {
   const x2 = Math.max(...S.items.map(i => i.x + i.w)), y2 = Math.max(...S.items.map(i => i.y + (els[i.id] ? els[i.id].offsetHeight : 200)));
   const s = Math.min(1.2, Math.max(.3, Math.min((innerWidth - 120) / (x2 - x1), (innerHeight - 160) / (y2 - y1))));
   S.view = { s, x: (innerWidth - (x2 - x1) * s) / 2 - x1 * s, y: (innerHeight - (y2 - y1) * s) / 2 - y1 * s }; applyView(); save();
+};
+let OBR = null;
+async function sdk() {
+  if (!OBR) { try { OBR = (await import("https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm")).default; } catch (e) {} }
+  return OBR;
+}
+if (MODAL) $("#full").textContent = "Sair da tela cheia";
+$("#full").onclick = async () => {
+  await dbSetNow();
+  const o = await sdk();
+  try {
+    if (o && o.isAvailable) {
+      await new Promise(ok => o.onReady(ok));
+      if (MODAL) await o.modal.close("quadro-tela-cheia");
+      else { await o.modal.open({ id: "quadro-tela-cheia", url: location.origin + location.pathname + "?modal=1", fullScreen: true }); await o.action.close(); }
+      return;
+    }
+  } catch (e) {}
+  document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
 };
 $("#exp").onclick = () => {
   try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: "application/json" })); a.download = "quadro-investigacao.json"; a.click(); } catch (e) {}
