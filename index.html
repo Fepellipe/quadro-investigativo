@@ -70,6 +70,7 @@ button.dng{background:#7a2a22;border-color:#a3402f}
 <input type="file" id="fimg" accept="image/*" multiple hidden>
 <input type="file" id="fjson" accept="application/json" hidden>
 
+<script src="obr.js"></script>
 <script>
 const NS = "http://www.w3.org/2000/svg";
 const $ = s => document.querySelector(s);
@@ -291,24 +292,24 @@ $("#fit").onclick = () => {
   const s = Math.min(1.2, Math.max(.3, Math.min((innerWidth - 120) / (x2 - x1), (innerHeight - 160) / (y2 - y1))));
   S.view = { s, x: (innerWidth - (x2 - x1) * s) / 2 - x1 * s, y: (innerHeight - (y2 - y1) * s) / 2 - y1 * s }; applyView(); save();
 };
-let OBR = null;
-async function sdk() {
-  if (!OBR) { try { OBR = (await import("https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3/+esm")).default; } catch (e) {} }
-  return OBR;
-}
 if (MODAL) $("#full").textContent = "Sair da tela cheia";
 $("#full").onclick = async () => {
-  await dbSetNow();
-  const o = await sdk();
+  const btn = $("#full"), label = btn.textContent;
+  const o = window.OBRSDK && window.OBRSDK.default;
   try {
-    if (o && o.isAvailable) {
-      await new Promise(ok => o.onReady(ok));
-      if (MODAL) await o.modal.close("quadro-tela-cheia");
-      else { await o.modal.open({ id: "quadro-tela-cheia", url: location.origin + location.pathname + "?modal=1", fullScreen: true }); await o.action.close(); }
-      return;
+    await dbSetNow();
+    if (!o) throw new Error("obr.js não carregou");
+    if (!o.isAvailable) throw new Error("fora do Owlbear");
+    await new Promise(ok => o.onReady(ok));
+    if (MODAL) await o.modal.close("quadro-tela-cheia");
+    else {
+      await o.modal.open({ id: "quadro-tela-cheia", url: location.origin + location.pathname + "?modal=1", fullScreen: true });
+      await o.action.close();
     }
-  } catch (e) {}
-  document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
+  } catch (e) {
+    btn.textContent = "Erro: " + (e && e.message ? e.message : e);
+    setTimeout(() => { btn.textContent = label; }, 4000);
+  }
 };
 $("#exp").onclick = () => {
   try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: "application/json" })); a.download = "quadro-investigacao.json"; a.click(); } catch (e) {}
