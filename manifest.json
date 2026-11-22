@@ -1,0 +1,12 @@
+{
+  "name": "Quadro de Investigação",
+  "version": "1.0",
+  "manifest_version": 1,
+  "action": {
+    "title": "Quadro de Investigação",
+    "icon": "/quadro-investigativo/icon.svg",
+    "popover": "/quadro-investigativo/index.html",
+    "width": 1000,
+    "height": 680
+  }
+}
