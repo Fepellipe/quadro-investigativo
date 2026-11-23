@@ -50,9 +50,24 @@ button.dng{background:#7a2a22;border-color:#a3402f}
 #hint{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;z-index:4;text-align:center;font-size:17px;color:#3b2616;line-height:1.6}
 #hint[hidden]{display:none}
 @media (prefers-reduced-motion:no-preference){.item{transition:box-shadow .15s}}
+.bar[hidden],#toast[hidden]{display:none}
+button.on{background:#8a5a2a;border-color:#ffe08a}
+#draw{left:24px;top:78px;flex-wrap:wrap;max-width:calc(100% - 48px)}
+#draw label{font-size:12px;display:flex;align-items:center;gap:6px}
+#draw input[type=range]{width:90px;accent-color:#ffe08a}
+#draw small{font-size:11px;opacity:.7}
+#board.draw{cursor:crosshair}
+#board.draw .item,#board.draw #strings path{pointer-events:none!important}
+#ink{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;z-index:900000;pointer-events:none}
+.photo.bare{background:none;padding:0;box-shadow:none}
+.photo.bare img{background:none;filter:drop-shadow(3px 7px 7px rgba(0,0,0,.45))}
+.photo.bare .txt{display:none}
+#drop{display:none;position:absolute;inset:18px;z-index:20;border:3px dashed #ffe08a;border-radius:14px;background:rgba(42,26,14,.55);place-items:center;font-size:22px;pointer-events:none}
+#drop.on{display:grid}
+#toast{position:absolute;left:50%;top:24px;transform:translateX(-50%);z-index:30;background:#7a2a22;border:1px solid #a3402f;border-radius:8px;padding:8px 14px;font-size:14px;max-width:80%}
 </style></head>
 <body>
-<div id="board"><div id="world"><svg id="strings"></svg></div></div>
+<div id="board"><div id="world"><svg id="ink"><defs><filter id="grain"><feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="2" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -2.4 1.8" result="m"/><feComposite in="SourceGraphic" in2="m" operator="in"/></filter></defs><g id="inkg"></g></svg><svg id="strings"></svg></div></div>
 <div id="frame"></div>
 <div id="hint">Quadro vazio.<br>Adicione um post-it, uma foto ou um papel.<br>Arraste do alfinete de um item até outro para ligar com barbante.</div>
 
@@ -63,14 +78,24 @@ button.dng{background:#7a2a22;border-color:#a3402f}
   <span class="sep"></span>
   <button id="fit" title="Centralizar tudo">Ver tudo</button>
   <button id="full">Tela cheia</button>
+  <button id="bdraw">Desenhar</button>
   <button id="exp" title="Baixar backup">Salvar</button>
   <button id="imp" title="Carregar backup">Abrir</button>
 </div>
+<div class="bar" id="draw" hidden>
+  <button data-tool="pen" class="on">Caneta</button><button data-tool="pencil">Lápis</button><button data-tool="eraser">Borracha</button>
+  <span class="sep"></span><span id="inkcols" style="display:flex;gap:6px"></span><span class="sep"></span>
+  <label>Espessura <input type="range" id="dsize" min="1" max="16" value="4"></label>
+  <label>Estabilizador <input type="range" id="dstab" min="0" max="60" value="25"></label>
+  <button id="dundo">Desfazer</button><small>Shift + arrastar move o quadro</small>
+</div>
 <div class="bar" id="ctx"></div>
+<div id="drop">Solte a imagem aqui</div><div id="toast" hidden></div>
 <input type="file" id="fimg" accept="image/*" multiple hidden>
 <input type="file" id="fjson" accept="application/json" hidden>
 
 <script src="obr.js"></script>
+<script src="freehand.js"></script>
 <script>
 const NS = "http://www.w3.org/2000/svg";
 const $ = s => document.querySelector(s);
@@ -79,7 +104,7 @@ const NOTE_COLORS = ["#fff176", "#ff9ec4", "#8fd3ff", "#b8f08a", "#ffc27a"];
 const STRING_COLORS = ["#c8202a", "#1e1e1e", "#e6c229", "#2a5bd7"];
 const uid = () => Math.random().toString(36).slice(2, 9);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-let S = { items: [], links: [], view: { x: 0, y: 0, s: 1 }, z: 1 };
+let S = { items: [], links: [], draw: [], view: { x: 0, y: 0, s: 1 }, z: 1 };
 let sel = null, els = {}, saveT = null, lastTap = { id: null, t: 0 };
 const MODAL = new URLSearchParams(location.search).has("modal");
 
@@ -114,7 +139,7 @@ function paint(it) {
     el.innerHTML = `<i class="pin" data-pin></i>${it.type === "photo" ? '<img draggable="false" alt="">' : ""}<div class="txt"></div><b class="rs" data-rs></b>`;
     world.appendChild(el);
   }
-  el.className = `item ${it.type}` + (sel && sel.k === "i" && sel.id === it.id ? " sel" : "") + (el.classList.contains("editing") ? " editing" : "");
+  el.className = `item ${it.type}` + (it.type === "photo" && it.frame === false ? " bare" : "") + (sel && sel.k === "i" && sel.id === it.id ? " sel" : "") + (el.classList.contains("editing") ? " editing" : "");
   Object.assign(el.style, { left: it.x + "px", top: it.y + "px", width: it.w + "px", zIndex: it.z, transform: `rotate(${it.rot}deg)` });
   if (it.type === "note") { el.style.background = it.color; el.style.minHeight = it.w * 0.95 + "px"; }
   if (it.img) el.querySelector("img").src = it.img;
@@ -202,6 +227,7 @@ world.addEventListener("pointerdown", e => {
   drag(e, ev => { it.x = ox + (ev.clientX - sx) / S.view.s; it.y = oy + (ev.clientY - sy) / S.view.s; paint(it); links(); });
 });
 board.addEventListener("pointerdown", e => {
+  if (D.on && e.button === 0 && !e.shiftKey) return startInk(e);
   select(null);
   const sx = e.clientX, sy = e.clientY, ox = S.view.x, oy = S.view.y;
   drag(e, ev => { S.view.x = ox + ev.clientX - sx; S.view.y = oy + ev.clientY - sy; applyView(); });
@@ -236,7 +262,7 @@ function ctx() {
   }
   const it = item(sel.id); if (!it) return;
   ctxBar.innerHTML = (it.type === "note" ? NOTE_COLORS.map(c => `<button class="sw" style="background:${c}" data-nc="${c}" aria-label="Cor do post-it"></button>`).join("") + `<span class="sep"></span>` : "") +
-    `<button data-act="edit">${it.type === "photo" ? "Legenda" : "Editar texto"}</button><button data-act="rl" title="Girar">↺</button><button data-act="rr" title="Girar">↻</button><button data-act="dup">Duplicar</button><button class="dng" data-act="deli">Excluir</button>`;
+    (it.type === "photo" ? `<button data-act="frame">${it.frame === false ? "Pôr moldura" : "Tirar moldura"}</button>` : "") + (it.type === "photo" && it.frame === false ? "" : `<button data-act="edit">${it.type === "photo" ? "Legenda" : "Editar texto"}</button>`) + `<button data-act="rl" title="Girar">↺</button><button data-act="rr" title="Girar">↻</button><button data-act="dup">Duplicar</button><button class="dng" data-act="deli">Excluir</button>`;
 }
 ctxBar.addEventListener("pointerdown", e => e.stopPropagation());
 ctxBar.addEventListener("input", e => {
@@ -254,30 +280,53 @@ ctxBar.addEventListener("click", e => {
   const it = item(sel.id);
   if (d.nc) { it.color = d.nc; paint(it); save(); }
   else if (d.act === "edit") edit(it.id);
+  else if (d.act === "frame") { it.frame = it.frame === false; paint(it); ctx(); links(); save(); }
   else if (d.act === "rl" || d.act === "rr") { it.rot += d.act === "rl" ? -4 : 4; paint(it); links(); save(); }
   else if (d.act === "dup") { const c = { ...it, id: uid(), x: it.x + 28, y: it.y + 28, z: ++S.z }; S.items.push(c); paint(c); select({ k: "i", id: c.id }); save(); }
   else if (d.act === "deli") removeItem(it.id);
 });
 
 /* ---------- imagens ---------- */
-function shrink(file) {
+function shrink(blob) {
   return new Promise(ok => {
     const r = new FileReader();
     r.onload = () => { const im = new Image(); im.onload = () => {
-      const k = Math.min(1, 700 / Math.max(im.width, im.height)), c = document.createElement("canvas");
+      const keep = /png|webp|gif/.test(blob.type), k = Math.min(1, 700 / Math.max(im.width, im.height)), c = document.createElement("canvas");
       c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
-      const g = c.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); g.drawImage(im, 0, 0, c.width, c.height);
-      ok(c.toDataURL("image/jpeg", .85)); }; im.onerror = () => ok(null); im.src = r.result; };
-    r.readAsDataURL(file);
+      const g = c.getContext("2d"); if (!keep) { g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height); }
+      g.drawImage(im, 0, 0, c.width, c.height);
+      ok(c.toDataURL(keep ? "image/webp" : "image/jpeg", .88)); }; im.onerror = () => ok(null); im.src = r.result; };
+    r.readAsDataURL(blob);
   });
 }
-async function addFiles(files) {
-  for (const f of files) { if (!f.type.startsWith("image/")) continue; const img = await shrink(f); if (img) addItem("photo", { img }); }
+async function addFiles(files, pos) {
+  let n = 0;
+  for (const f of files) {
+    if (!f.type.startsWith("image/")) continue;
+    const img = await shrink(f); if (!img) { say("Não consegui abrir essa imagem"); continue; }
+    addItem("photo", pos ? { img, x: pos.x - 110 + n * 30, y: pos.y - 80 + n * 30 } : { img }); n++;
+  }
+}
+async function addRemote(src, pos) {
+  let img = src;
+  try { const b = await (await fetch(src)).blob(); img = (await shrink(b)) || src; } catch (e) {}
+  addItem("photo", { img, x: pos.x - 110, y: pos.y - 80 });
 }
 $("#fimg").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
 addEventListener("paste", e => { if (e.clipboardData && e.clipboardData.files.length) addFiles(e.clipboardData.files); });
-board.addEventListener("dragover", e => e.preventDefault());
-board.addEventListener("drop", e => { e.preventDefault(); addFiles(e.dataTransfer.files); });
+const dropBox = $("#drop"), dropOk = e => e.dataTransfer && [...e.dataTransfer.types].some(t => t === "Files" || t === "text/uri-list" || t === "text/html");
+document.addEventListener("dragenter", e => { if (dropOk(e)) dropBox.classList.add("on"); });
+document.addEventListener("dragover", e => e.preventDefault());
+document.addEventListener("dragleave", e => { if (!e.relatedTarget) dropBox.classList.remove("on"); });
+document.addEventListener("drop", e => {
+  e.preventDefault(); dropBox.classList.remove("on");
+  const dt = e.dataTransfer, pos = toWorld(e);
+  if (dt.files.length) return addFiles(dt.files, pos);
+  const m = (dt.getData("text/html") || "").match(/<img[^>]+src=["']([^"']+)["']/i), src = (m && m[1]) || dt.getData("text/uri-list");
+  if (src && /^(https?:|data:image)/.test(src)) addRemote(src, pos);
+});
+let toastT;
+function say(m) { const t = $("#toast"); t.textContent = m; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 6000); }
 
 /* ---------- barra de ferramentas ---------- */
 $("#tools").addEventListener("pointerdown", e => e.stopPropagation());
@@ -292,24 +341,21 @@ $("#fit").onclick = () => {
   const s = Math.min(1.2, Math.max(.3, Math.min((innerWidth - 120) / (x2 - x1), (innerHeight - 160) / (y2 - y1))));
   S.view = { s, x: (innerWidth - (x2 - x1) * s) / 2 - x1 * s, y: (innerHeight - (y2 - y1) * s) / 2 - y1 * s }; applyView(); save();
 };
+const wait = (p, ms, msg) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(msg)), ms))]);
 if (MODAL) $("#full").textContent = "Sair da tela cheia";
 $("#full").onclick = async () => {
-  const btn = $("#full"), label = btn.textContent;
   const o = window.OBRSDK && window.OBRSDK.default;
   try {
     await dbSetNow();
-    if (!o) throw new Error("obr.js não carregou");
-    if (!o.isAvailable) throw new Error("fora do Owlbear");
-    await new Promise(ok => o.onReady(ok));
-    if (MODAL) await o.modal.close("quadro-tela-cheia");
+    if (!o) throw new Error("obr.js não carregou (confira se o arquivo está na raiz do repositório)");
+    if (!o.isAvailable) { document.fullscreenElement ? document.exitFullscreen() : await document.documentElement.requestFullscreen(); return; }
+    await wait(new Promise(ok => o.onReady(ok)), 4000, "O Owlbear não respondeu");
+    if (MODAL) await wait(o.modal.close("quadro-tela-cheia"), 4000, "Não consegui fechar a janela");
     else {
-      await o.modal.open({ id: "quadro-tela-cheia", url: location.origin + location.pathname + "?modal=1", fullScreen: true });
+      await wait(o.modal.open({ id: "quadro-tela-cheia", url: location.origin + location.pathname + "?modal=1", fullScreen: true }), 4000, "Não consegui abrir a janela");
       await o.action.close();
     }
-  } catch (e) {
-    btn.textContent = "Erro: " + (e && e.message ? e.message : e);
-    setTimeout(() => { btn.textContent = label; }, 4000);
-  }
+  } catch (e) { say("Tela cheia: " + (e && e.message ? e.message : e)); }
 };
 $("#exp").onclick = () => {
   try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(S)], { type: "application/json" })); a.download = "quadro-investigacao.json"; a.click(); } catch (e) {}
@@ -319,11 +365,66 @@ $("#fjson").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   try { const j = JSON.parse(await f.text()); if (!Array.isArray(j.items)) return; load(j); save(); } catch (err) {}
 };
+/* ---------- desenho ---------- */
+const INK = ["#1e1e1e", "#c8202a", "#2a5bd7", "#f4efe0", "#e6c229"];
+const D = { on: false, tool: "pen", color: INK[0], size: 4, stab: 25 };
+const PEN = { pen: { thinning: .55, smoothing: .6, streamline: .35 }, pencil: { thinning: .25, smoothing: .5, streamline: .4 } };
+function inkPath(st) {
+  const pts = st.pts.length < 2 ? [...st.pts, ...st.pts] : st.pts;
+  const out = PF.getStroke(pts, { size: st.size, ...(PEN[st.tool] || PEN.pen), simulatePressure: true });
+  if (!out.length) return "";
+  const d = out.reduce((a, [x0, y0], i, arr) => { const [x1, y1] = arr[(i + 1) % arr.length]; a.push(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2); return a; }, ["M", ...out[0], "Q"]);
+  d.push("Z"); return d.join(" ");
+}
+const inkEl = st => `<path d="${inkPath(st)}" fill="${st.color}"${st.tool === "pencil" ? ' filter="url(#grain)" opacity=".85"' : ""}/>`;
+function inks() { if (window.PF) $("#inkg").innerHTML = S.draw.map(inkEl).join(""); }
+function undoInk() { S.draw.pop(); inks(); save(); }
+function startInk(e) {
+  const p0 = toWorld(e);
+  if (D.tool === "eraser") {
+    const wipe = ev => {
+      const p = toWorld(ev), n = S.draw.length;
+      S.draw = S.draw.filter(st => !st.pts.some(q => Math.hypot(q[0] - p.x, q[1] - p.y) < 14 + D.size + st.size / 2));
+      if (S.draw.length !== n) inks();
+    };
+    wipe(e); return drag(e, wipe);
+  }
+  const L = D.stab / S.view.s, b = { x: p0.x, y: p0.y };
+  const st = { id: uid(), tool: D.tool, color: D.color, size: D.size, pts: [[+b.x.toFixed(1), +b.y.toFixed(1)]] };
+  S.draw.push(st);
+  $("#inkg").insertAdjacentHTML("beforeend", inkEl(st));
+  const el = $("#inkg").lastElementChild, upd = () => el.setAttribute("d", inkPath(st));
+  drag(e, ev => {
+    const p = toWorld(ev), dx = p.x - b.x, dy = p.y - b.y, d = Math.hypot(dx, dy);
+    if (d <= L || d === 0) return;
+    const k = (d - L) / d; b.x += dx * k; b.y += dy * k;
+    st.pts.push([+b.x.toFixed(1), +b.y.toFixed(1)]); upd();
+  });
+}
+function setDraw(on) {
+  if (on && !window.PF) return say("freehand.js não carregou (confira se o arquivo está na raiz do repositório)");
+  D.on = on; board.classList.toggle("draw", on); $("#draw").hidden = !on; $("#bdraw").classList.toggle("on", on);
+  if (on) select(null);
+}
+$("#inkcols").innerHTML = INK.map(c => `<button class="sw" style="background:${c}" data-ink="${c}" aria-label="Cor da tinta"></button>`).join("");
+$("#bdraw").onclick = () => setDraw(!D.on);
+$("#draw").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.tool) { D.tool = b.dataset.tool; document.querySelectorAll("[data-tool]").forEach(x => x.classList.toggle("on", x === b)); }
+  if (b.dataset.ink) D.color = b.dataset.ink;
+  if (b.id === "dundo") undoInk();
+});
+$("#dsize").oninput = e => { D.size = +e.target.value; };
+$("#dstab").oninput = e => { D.stab = +e.target.value; };
+addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !(e.target.closest && e.target.closest("[contenteditable=true],input")) && S.draw.length) { e.preventDefault(); undoInk(); }
+});
+
 function hint() { $("#hint").hidden = S.items.length > 0; }
 function load(data) {
   Object.values(els).forEach(el => el.remove()); els = {};
-  S = { items: [], links: [], view: { x: 0, y: 0, s: 1 }, z: 1, ...data };
-  S.items.forEach(paint); applyView(); select(null); hint(); requestAnimationFrame(links);
+  S = { items: [], links: [], draw: [], view: { x: 0, y: 0, s: 1 }, z: 1, ...data };
+  S.items.forEach(paint); inks(); applyView(); select(null); hint(); requestAnimationFrame(links);
 }
 dbGet().then(d => load(d || {}));
 </script></body></html>
